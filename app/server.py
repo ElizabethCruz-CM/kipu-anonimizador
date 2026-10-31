@@ -145,7 +145,12 @@ async def anonymize(request: Request):
     return JSONResponse({"records": recs, "entities": ents})
 
 
+STATIC = os.path.join(os.path.dirname(__file__), "static", "index.html")
+
+
 async def root(request):
+    if os.path.exists(STATIC):
+        return FileResponse(STATIC, media_type="text/html; charset=utf-8")
     return PlainTextResponse("Kipu Pay anonimizador. Rutas en /v1: health, run, output, anonymize, entities.")
 
 
@@ -169,4 +174,8 @@ async def lifespan(app):
     yield
 
 
-app = Starlette(routes=[Route("/", root), Mount("/v1", routes=routes())] + routes(), lifespan=lifespan)
+from starlette.middleware import Middleware
+from starlette.middleware.cors import CORSMiddleware
+
+app = Starlette(routes=[Route("/", root), Route("/demo", root), Route("/v1", health), Mount("/v1", routes=routes())] + routes(),
+                lifespan=lifespan, middleware=[Middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])])

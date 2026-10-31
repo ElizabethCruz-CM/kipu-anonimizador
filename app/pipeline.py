@@ -316,6 +316,25 @@ def _unknown_ids(reg, text):
     return "|".join(sorted(out)[:1])
 
 
+def _record_people(an, text, suf):
+    """Personas nombradas en el registro; si un nombre es ambiguo, prefiere la variante con el identificador del registro."""
+    out = set()
+    rx = an.rep.global_rx
+    if rx is None:
+        return out
+    for m in rx.finditer(fold(text)):
+        ks = an.rep.global_forms.get(re.sub(r"[\s_]+", " ", m.group(0))) or set()
+        if len(ks) == 1:
+            out |= ks
+        elif ks:
+            pref = [k for k in ks if suf and k.endswith("|" + suf)]
+            if not pref:
+                pref = [k for k in ks if not k.startswith("txt:")] or [k for k in ks if "|" not in k]
+            if len(pref) == 1:
+                out.add(pref[0])
+    return out
+
+
 def _attach_suffix(reg, p, suf):
     """El identificador nuevo que desempata a un homónimo queda como parte de esa persona."""
     if not suf:
@@ -367,6 +386,7 @@ def anonymize_records(an, source, records):
         if source == "chats":
             th = r.get("thread_id", "")
             persons = set(an.thread_persons.get(th, set())) | an._strong_ids(r.get("text", "")) | an._name_ids((r.get("author") or "") + "\n" + (r.get("text") or ""))
+            persons |= _record_people(an, (r.get("author") or "") + "\n" + (r.get("text") or ""), sufs[records.index(r)])
             author = r.get("author") or ""
             ak = None
             ks = an.rep.global_forms.get(fold(author))
@@ -409,14 +429,18 @@ def anonymize_records(an, source, records):
             old_r, old_o = snap.get(k, (set(), set()))
             if rid in p.records:
                 touched[k].add(rid)
-                p._live_orig |= (p.originals - old_o)
+                p._live_orig = getattr(p, "_live_orig", set()) | (p.originals - old_o)
     ents = []
     for k, rids in touched.items():
         p = reg.persons[k]
         ps = {a: b for a, b in p.ps.items() if b}
         if p.tokens and "name" not in ps:
             ps["name"] = " ".join(p.pseudo_tokens[:2])
-        ents.append({"entity_id": p.pid, "type": "person", "originals": sorted(p._live_orig or p.originals),
+        if not ps and p.map_email:
+            ps["email"] = sorted(p.map_email.values())[0]
+        if not ps:
+            continue
+        ents.append({"entity_id": p.pid, "type": "person", "originals": sorted(getattr(p, "_live_orig", set()) or p.originals),
                      "pseudonyms": ps, "records": sorted(rids)})
     return out, ents
 

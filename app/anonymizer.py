@@ -123,6 +123,17 @@ class Person:
         return " ".join(res)
 
 
+SURNAMES_EXTRA = {fold(x) for x in """Gómez González Rodríguez Martínez García López Hernández Pérez Sánchez Ramírez Torres Díaz Vargas Rojas
+Moreno Jiménez Muñoz Castro Ruiz Ortiz Gutiérrez Romero Álvarez Herrera Osorio Cardona Giraldo Henao Arango Ospina Mejía Castaño
+Marulanda Hoyos Zapata Velásquez Correa Montoya Londoño Restrepo Betancur Quintero Salazar Agudelo Flórez Ordóñez Aristizábal
+Quintanilla Santander Bolívar Carulla Castilla Galán Robledo Cuesta Bermúdez Pineda Naranjo Arias Cortés Rincón Castillo""".split()}
+COMMON_CAPS = {fold(x) for x in """Hola Gracias Buenas Buenos Compra Pago Cuenta Tarjeta Crédito Banco Cliente Clienta Señor Señora
+Estimado Estimada Querido Querida Asunto Para Por Con Del Las Los Una Uno Este Esta Ese Esa Mi Tu Su Nuestro Nuestra Calle Carrera
+Avenida Transferencia Retiro Abono Cuota Informe Acta Minuta Equipo Gerencia Soporte Reclamo Queja Petición Caso Incidente
+Política Manual Comunicado Plan Total Saldo Valor Monto Fecha Ciudad Barrio Dirección Correo Celular Teléfono Lunes Martes
+Miércoles Jueves Viernes Sábado Domingo Enero Febrero Marzo Abril Mayo Junio Julio Agosto Septiembre Octubre Noviembre Diciembre""".split()}
+
+
 # ======================================================================= registro
 class Registry:
     def __init__(self, state=None):
@@ -310,12 +321,19 @@ class Registry:
         surnames_f = set()
         for p in self.persons.values():
             for t in p.surn: surnames_f.add(fold(t))
+        surnames_f |= {fold(a) for a in P.APELLIDOS} | SURNAMES_EXTRA
         for i, t in enumerate(texts):
             for m in self.NAME_RX.finditer(t or ""):
                 toks = m.group(1).split()
+                pre = fold(t[max(0, m.start() - 25):m.start()])
+                cue = re.search(r"(me llamo|mi nombre es|soy|habla|a nombre de|nombre:|titular:|cliente:|clienta:|se[nñ]or|se[nñ]ora|sr\.|sra\.|don|dona|firma:|atentamente,?|cordialmente,?)\s*$", pre)
                 # recorta tokens iniciales que no son nombre (Hola, Gracias, Compra...)
-                while toks and fold(toks[0]) not in given_f:
-                    toks = toks[1:]
+                if not cue:
+                    while toks and fold(toks[0]) not in given_f:
+                        toks = toks[1:]
+                    # nombre de pila desconocido seguido de un apellido conocido
+                else:
+                    toks = toks[:4]
                 if len(toks) < 2:
                     continue
                 # descarta si el resto no parece apellido (palabra común capitalizada)
@@ -459,11 +477,11 @@ def pseudo_attr(p: Person, kind: str, orig: str) -> str:
         p.ps.setdefault("account", v)
         return v
     if kind == "plate":
-        v = P.placa(key + "|" + orig.upper(), orig)
+        v = P.placa(key + "|" + re.sub(r"[^A-Z0-9]", "", orig.upper()), orig)
         p.ps.setdefault("plate", v)
         return v
     if kind == "passport":
-        v = P.pasaporte(key + "|" + orig.upper(), orig)
+        v = P.pasaporte(key + "|" + re.sub(r"[^A-Z0-9]", "", orig.upper()), orig)
         p.ps.setdefault("passport", v)
         return v
     if kind == "address":

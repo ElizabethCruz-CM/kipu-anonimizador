@@ -27,10 +27,11 @@ YEAR_CTX = re.compile(r"(vinculad[oa]s?|cliente|entr[eé]|abr[ií]|estoy con ust
 
 
 class Hit:
-    __slots__ = ("start", "end", "new", "prio", "pkey", "orig")
+    __slots__ = ("start", "end", "new", "prio", "pkey", "orig", "rec")
 
-    def __init__(self, start, end, new, prio, pkey, orig):
+    def __init__(self, start, end, new, prio, pkey, orig, rec=True):
         self.start, self.end, self.new, self.prio, self.pkey, self.orig = start, end, new, prio, pkey, orig
+        self.rec = rec  # False: reemplazo parcial que no contiene un seudónimo declarado
 
 
 class Replacer:
@@ -218,7 +219,7 @@ class Replacer:
                         new = self.reg._pseudo_local(p, loc, pg, ps) + "@" + dom
                     else:
                         new = "usuario" + P.digitos(e, "em", 4) + "@" + dom
-                    p.map_email[e] = new; p.emails.add(e)
+                    p.map_email[e] = new; p.emails.add(e); p.ps.setdefault("email", new)
                     hits.append(Hit(m.start(), end, new, 94, p.key, text[m.start():end]))
 
         # 3. correos deletreados
@@ -240,7 +241,7 @@ class Replacer:
                     newe = self.reg._pseudo_local(p, loc, pg, ps) + "@" + dom
                 else:
                     newe = "usuario" + P.digitos(e, "em", 4) + "@" + dom
-            p.map_email[e] = newe; p.emails.add(e)
+            p.map_email[e] = newe; p.emails.add(e); p.ps.setdefault("email", newe)
             nloc, _, ndom = newe.partition("@")
             spoken = nloc.replace(".", " punto ").replace("_", " guion bajo ").replace("-", " guion ") + " arroba " + ndom.replace(".", " punto ")
             orig = text[m.start():m.end()]
@@ -313,7 +314,7 @@ class Replacer:
                     continue
                 k, kind, v = last4[l4]
                 newfull = digits(pseudo_attr(self.person(k), kind, v))
-                hits.append(Hit(m.start(), m.end(), newfull[-4:], 85, k, None))
+                hits.append(Hit(m.start(), m.end(), newfull[-4:], 85, k, None, False))
         for m in re.finditer(r"(?:terminad[oa]s?|termina|finaliza|acaba)\s+en\s+(\d{4})(?!\d)", text, re.I):
             l4 = m.group(1)
             own = [(k, kind, v) for k, p in self.reg.persons.items() for kind, vals in (("cedula", p.cedulas), ("phone", p.phones))
@@ -323,7 +324,7 @@ class Replacer:
                 new4 = digits(pseudo_attr(self.person(k), kind, v))[-4:]
             else:
                 k = ctx.get("owner"); new4 = P.digitos(l4 + str(ctx.get("owner")), "l4", 4)
-            hits.append(Hit(m.start(1), m.end(1), new4, 84, k, None))
+            hits.append(Hit(m.start(1), m.end(1), new4, 84, k, None, False))
 
         # 5. direcciones conocidas y genéricas
         if self.addr_rx:
@@ -360,7 +361,7 @@ class Replacer:
                 p = self.person(own[0]); b = next(b for b in p.births if b[5:] == f"{mes:02d}-{dd:02d}")
                 nb = pseudo_attr(p, "birth", b)
                 new = f"{int(nb[8:10])} de {MESES[int(nb[5:7]) - 1]}"
-                hits.append(Hit(m.start(2), m.end(3), new, 87, own[0], None))
+                hits.append(Hit(m.start(2), m.end(3), new, 87, own[0], None, False))
             else:
                 x = P.h("bday", m.group(0))
                 hits.append(Hit(m.start(2), m.end(3), f"{1 + x % 28} de {MESES[(x // 28) % 12]}", 87, None, None))
@@ -454,7 +455,7 @@ class Replacer:
                 if k:
                     p = self.person(k)
                     new = p.pseudo_tokens[0][0] + ". " + p.pseudo_tokens[p.n_given] if len(p.pseudo_tokens) > p.n_given else p.pseudo_tokens[0]
-                    hits.append(Hit(m.start(), m.end(), new, 71, k, text[m.start():m.end()]))
+                    hits.append(Hit(m.start(), m.end(), new, 71, k, text[m.start():m.end()], False))
         if True:
             for k in persons_ctx:
                 p = self.person(k)
@@ -464,14 +465,14 @@ class Replacer:
                 for m in re.finditer(r"(?<![a-z0-9])" + re.escape(ini) + r"\.\s?" + re.escape(s1) + r"(?![a-z0-9])", ft):
                     orig = text[m.start():m.end()]
                     new = p.pseudo_tokens[0][0] + ". " + p.pseudo_tokens[p.n_given] if len(p.pseudo_tokens) > p.n_given else p.pseudo_tokens[0]
-                    hits.append(Hit(m.start(), m.end(), new, 71, k, orig))
+                    hits.append(Hit(m.start(), m.end(), new, 71, k, orig, False))
             # apellido tras tratamiento: "señor Santander", "Sra. Castaño"
             for k in persons_ctx:
                 p = self.person(k)
                 for i, s in enumerate(p.surn):
                     for m in re.finditer(r"(?<![a-z])" + HONOR_RX + r"\s+(" + re.escape(fold(s)) + r")(?![a-z0-9])", ft):
                         orig = text[m.start(1):m.end(1)]
-                        hits.append(Hit(m.start(1), m.end(1), apply_style(orig, p.pseudo_for(orig)), 69, k, orig))
+                        hits.append(Hit(m.start(1), m.end(1), apply_style(orig, p.pseudo_for(orig)), 69, k, orig, False))
 
         # 11. cuasi-identificadores: ocupación, barrio, año de vinculación
         if ctx.get("quasi"):
@@ -505,9 +506,9 @@ class Replacer:
                 pre = ft[max(0, m.start() - 30):m.start()]
                 if not re.search(r"(\bsoy|\bes|\bera|\bsea|\bfue|trabaj\w*\s+(como|de)|\bcomo|profesion:?|ocupacion:?|oficio:?|,|\(|\ba|\ban|\bun|\buna|\bes un[a]?|\bsoy un[a]?|\by)\s*$", pre):
                     continue
-                hits.append(Hit(m.start(), m.end(), sec, 60, ctx.get("owner"), orig))
+                hits.append(Hit(m.start(), m.end(), sec, 60, ctx.get("owner"), orig, False))
         for m in YEAR_CTX.finditer(ft):
-            hits.append(Hit(m.start(3), m.end(3), "hace unos años", 60, ctx.get("owner"), text[m.start(3):m.end(3)]))
+            hits.append(Hit(m.start(3), m.end(3), "hace unos años", 60, ctx.get("owner"), text[m.start(3):m.end(3)], False))
         for bf, cities in self.city_of_barrio.items():
             for m in re.finditer(r"(?<![a-z])(en|barrio|sector|de|por|cerca de)\s+(el\s+|la\s+)?(" + re.escape(bf) + r")(?![a-z])", ft):
                 orig = text[m.start(3):m.end(3)]
@@ -523,7 +524,7 @@ class Replacer:
                 if fold(city) == bf:
                     continue
                 s = m.start(2) if m.group(2) else m.start(3)
-                hits.append(Hit(s, m.end(3), city, 59, ctx.get("owner"), text[s:m.end(3)]))
+                hits.append(Hit(s, m.end(3), city, 59, ctx.get("owner"), text[s:m.end(3)], False))
         return hits
 
     # ---------------------------------------------------------- aplicación
@@ -549,7 +550,8 @@ class Replacer:
             if h.pkey and rid:
                 p = self.reg.persons.get(h.pkey)
                 if p is not None:
-                    p.records.add(rid)
+                    if h.rec:
+                        p.records.add(rid)
                     if h.prio >= 69 and h.orig:
                         p.originals.add(h.orig)
         out.append(text[pos:])
