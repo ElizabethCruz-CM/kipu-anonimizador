@@ -93,8 +93,8 @@ class Replacer:
 
     def _orphan(self, kind, value, ctx):
         """Dueño de un identificador desconocido: el cliente en contexto o una persona sintética."""
-        owner = ctx.get("owner")
-        if owner:
+        owner = ctx.get("owner") or ctx.get("author")
+        if owner and self.person(owner).tokens:
             return self.person(owner)
         k = f"orphan:{kind}:{value}"
         if k not in self.reg.persons:
@@ -205,8 +205,14 @@ class Replacer:
                     p.emails.add(e)
                     self.reg.by_email[e] = k2
                     hits.append(Hit(m.start(), end, new, 95, k2, text[m.start():end]))
-                elif not any(fold(dom.split(".")[0]) == kf for kf in ("kipupay",)) or True:
-                    p = self._orphan("email", e, ctx)
+                else:
+                    p = None
+                    for kk in sorted(persons_ctx):
+                        pp = self.person(kk)
+                        if pp.tokens and len(pp.tokens) >= 2 and self._local_matches(pp, loc):
+                            p = pp; break
+                    if p is None:
+                        p = self._orphan("email", e, ctx)
                     if p.pseudo_tokens:
                         pg = p.pseudo_tokens[:max(p.n_given, 1)]; ps = p.pseudo_tokens[p.n_given:] or p.pseudo_tokens[-1:]
                         new = self.reg._pseudo_local(p, loc, pg, ps) + "@" + dom
@@ -344,6 +350,21 @@ class Replacer:
                         new = date_forms(nb)[i]
                         hits.append(Hit(m.start(), m.end(), new, 87, k, text[m.start():m.end()]))
 
+        # 6b. cumpleaños sin año ("cumple años el 20 de julio") -> persona con esa fecha (si es única)
+        for m in re.finditer(r"(cumple\s*anos|cumpleanos|nacio|naci|fecha de nacimiento)[^.\n]{0,30}?\b(\d{1,2}) de (" + "|".join(MESES) + r")\b(?!\s+de\s+\d)", ft):
+            dd, mes = int(m.group(2)), MESES.index(m.group(3)) + 1
+            own = sorted({k for k, p in self.reg.persons.items() for b in p.births if b[5:] == f"{mes:02d}-{dd:02d}"})
+            if len(own) > 1:
+                own = [k for k in own if self.person(k).staff] or own
+            if len(own) == 1:
+                p = self.person(own[0]); b = next(b for b in p.births if b[5:] == f"{mes:02d}-{dd:02d}")
+                nb = pseudo_attr(p, "birth", b)
+                new = f"{int(nb[8:10])} de {MESES[int(nb[5:7]) - 1]}"
+                hits.append(Hit(m.start(2), m.end(3), new, 87, own[0], None))
+            else:
+                x = P.h("bday", m.group(0))
+                hits.append(Hit(m.start(2), m.end(3), f"{1 + x % 28} de {MESES[(x // 28) % 12]}", 87, None, None))
+
         # 7. placas y pasaportes
         for m in PLATE_RX.finditer(text):
             if m.group(1) in PLATE_BLOCK:
@@ -457,6 +478,16 @@ class Replacer:
             hits.extend(self._quasi(text, ft, ctx))
         return hits
 
+    def _local_matches(self, p, loc):
+        g = fold(p.tokens[0]); sn = [fold(t) for t in p.surn]
+        if not sn:
+            return False
+        loc = fold(loc)
+        cands = {f"{g}.{sn[0]}", f"{g}{sn[0]}", f"{g[0]}{sn[0]}", f"{g}_{sn[0]}", f"{g[0]}.{sn[0]}"}
+        if len(sn) > 1:
+            cands |= {f"{g[0]}{sn[0]}{sn[1][0]}", f"{g}.{sn[0]}.{sn[1]}"}
+        return loc in cands
+
     def _is_kept_at(self, ft, s, e):
         for kf in self.kept_f:
             i = ft.find(kf, max(0, s - len(kf)), e + len(kf))
@@ -471,6 +502,9 @@ class Replacer:
                 orig = text[m.start():m.end()]
                 if orig[:1].isupper() and not ctx.get("quasi_caps"):
                     continue  # "Contadora" como cargo en firmas
+                pre = ft[max(0, m.start() - 30):m.start()]
+                if not re.search(r"(\bsoy|\bes|\bera|\bsea|\bfue|trabaj\w*\s+(como|de)|\bcomo|profesion:?|ocupacion:?|oficio:?|,|\(|\ba|\ban|\bun|\buna|\bes un[a]?|\bsoy un[a]?|\by)\s*$", pre):
+                    continue
                 hits.append(Hit(m.start(), m.end(), sec, 60, ctx.get("owner"), orig))
         for m in YEAR_CTX.finditer(ft):
             hits.append(Hit(m.start(3), m.end(3), "hace unos años", 60, ctx.get("owner"), text[m.start(3):m.end(3)]))

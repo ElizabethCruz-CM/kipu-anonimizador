@@ -35,6 +35,7 @@ class Person:
         self.passports = set(); self.accounts = set()
         self.city = ""; self.barrio = ""; self.occupation = ""; self.vinc_year = ""
         self.cliente_id = ""; self.emp_id = ""
+        self.staff = False
         self.records = set()
         self.originals = set()    # formas que de verdad aparecieron en la entrada
         self.pseudo_tokens = []
@@ -132,6 +133,7 @@ class Registry:
         self.state = state or {}             # seudónimos persistidos {key: tokens}
         self.used_names = set(); self.used_pairs = set()
         self.real_tokens = set()
+        self.radicados = {}; self.tx_client = {}
 
     def get(self, key, kind):
         p = self.persons.get(key)
@@ -161,6 +163,7 @@ class Registry:
         for r in empleados:
             p = self.get(r["id"], "employee")
             p.emp_id = r["id"]
+            p.staff = True
             p.set_name(r.get("nombre", ""))
             if r.get("correo"): p.emails.add(r["correo"].strip())
             if r.get("celular"): p.phones.add(r["celular"].strip())
@@ -168,6 +171,12 @@ class Registry:
             if r.get("fecha_nacimiento"): p.births.add(r["fecha_nacimiento"].strip())
             p.city = r.get("ciudad", "")
             self.by_emp[r["id"]] = p.key
+        for r in data["tables"].get("pqrs", []):
+            if r.get("radicado") and r.get("cliente_id") in self.by_cliente:
+                self.radicados[r["radicado"]] = self.by_cliente[r["cliente_id"]]
+        for r in data["tables"].get("transacciones", []):
+            if r.get("tx_id") and r.get("cliente_id") in self.by_cliente:
+                self.tx_client[r["tx_id"]] = self.by_cliente[r["cliente_id"]]
         self._index_basic()
         # usuarios del chat
         thread_text = defaultdict(list); uid_threads = defaultdict(set)
@@ -217,6 +226,8 @@ class Registry:
                 p = self.persons[key]
             p.set_name(real)
             p.uids.add(u["id"])
+            if p.kind == "employee" or (prof.get("title") and prof.get("title") != "Cliente"):
+                p.staff = True
             if email: p.emails.add(email)
             if prof.get("phone"): p.phones.add(prof["phone"])
             if u.get("name") and u["name"] not in ("deactivateduser",):
@@ -294,7 +305,7 @@ class Registry:
         suffixes: lista paralela a texts con un desambiguador (p. ej. una cédula nueva en el mismo registro)."""
         new_keys = []
         kept_f = {fold(k) for k in KEPT}
-        known = set(self.form_index_all())
+        known = {f for f in self.form_index_all() if len(f.split()) >= 2}
         given_f = {fold(g) for g in GIVEN}
         surnames_f = set()
         for p in self.persons.values():
